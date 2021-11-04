@@ -11,7 +11,6 @@ from logzero import logger
 
 import apkutils2 as apkutils
 from asyncadb import adb
-from device_names import device_names
 from core.freeport import freeport
 from core.utils import current_ip
 from core import fetching
@@ -55,6 +54,7 @@ class AndroidDevice(object):
         do forward and start proxy
         """
         logger.info("Init device: %s", self._serial)
+        self._current_ip = current_ip()
         self._callback(STATUS_INIT)
 
         self._init_binaries()
@@ -152,7 +152,8 @@ class AndroidDevice(object):
             else:
                 print(info, ":", m.version_code, m.version_name)
                 logger.debug("%s install %s", self, path)
-                self._device.install(path, force=True)
+                # self._device.install(path, force=True)
+                self._device.install(path)
         except Exception as e:
             traceback.print_exc()
             logger.warning("%s Install apk %s error %s", self, path, e)
@@ -172,7 +173,32 @@ class AndroidDevice(object):
         ],
                             silent=True)
 
+        port = self._rtcsrv_port = freeport.get()
+        logger.debug("%s rtc srv start, port %d", self, port)
+
+        self.run_background([
+            'rtcsrv', '-addr', ':'+str(port),
+            '-minicap', str(self._atx_proxy_port),
+            '-deviceid', self._serial,
+            '-devicetype', "android"
+        ], silent=False)
+
+        port = self._appium_port = freeport.get()
+        logger.debug("%s appium start, port %d", self, port)
+
+        self.run_background([
+            'appium', '-p', str(port),
+            '-dc', '{"udid": "%s"}'%(self._serial)
+        ], silent=False)
+        
+        agentEnv = os.environ
+        agentEnv["APPIUM_SERVER_URL"] = "http://localhost:%d/wd/hub"%(self._appium_port)
+        self.run_background([
+            'python', 'deviceagent/Starter.py', '-k', 'testgroup', '-v', 'devicelab',  '-u', self._serial
+        ], silent=False, env=agentEnv)
+
     def addrs(self):
+        self._current_ip = current_ip()
         def port2addr(port):
             return self._current_ip + ":" + str(port)
 
@@ -180,6 +206,8 @@ class AndroidDevice(object):
             "atxAgentAddress": port2addr(self._atx_proxy_port),
             "remoteConnectAddress": port2addr(self._adb_remote_port),
             "whatsInputAddress": port2addr(self._whatsinput_port),
+            "webrtc":port2addr(self._rtcsrv_port),
+            "appiumUrl": "http://"+port2addr(self._appium_port),
         }
 
     def adb_call(self, *args):
@@ -213,7 +241,7 @@ class AndroidDevice(object):
         ],
                             silent=True)
         return listen_port
-
+    
     def run_background(self, *args, **kwargs):
         silent = kwargs.pop('silent', False)
         if silent:
@@ -237,7 +265,7 @@ class AndroidDevice(object):
             "brand": brand,
             "version": version,
             "model": model,
-            "name": device_names.get(model, model),
+            "name": model,
         }
 
     async def reset(self):

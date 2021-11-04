@@ -239,6 +239,7 @@ async def device_watch(allow_remote: bool = False):
                 continue
         if event.present:
             try:
+                hostname = socket.gethostname()
                 udid = serial2udid[event.serial] = event.serial
                 udid2serial[udid] = event.serial
 
@@ -256,6 +257,7 @@ async def device_watch(allow_remote: bool = False):
                     "colding": False,
                     "provider": device.addrs(),
                     "properties": await device.properties(),
+                    "hostname": hostname,
                 })  # yapf: disable
                 logger.info("Device:%s is ready", event.serial)
             except RuntimeError:
@@ -290,6 +292,19 @@ async def async_main():
     args = parser.parse_args()
     # yapf: enable
 
+    #get the server ip
+    if args.server == "localhost:4000":
+        r = requests.get("https://food-ginkgo.stg-myteksi.com/data/mobilelabserver.json")
+        try:
+            r.raise_for_status()
+        except requests.HTTPError:
+            pprint(r.text)
+            raise
+        print(dir(r))
+        server = r.text
+        args.server = server.strip()+":4000"
+        print("connec to remote: ", args.server)
+
     settings.atx_agent_version = args.atx_agent_version
 
     owner_email = args.owner
@@ -320,7 +335,8 @@ async def async_main():
     hbconn = await heartbeat_connect(args.server,
                                      secret=secret,
                                      self_url=provider_url,
-                                     owner=owner_email)
+                                     owner=owner_email, 
+                                     args = args)
 
     await device_watch(args.allow_remote)
 
